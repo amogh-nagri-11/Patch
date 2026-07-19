@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Patch{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #181b22; --border: #2a2f3a;
+      --text: #e6e8ee; --muted: #8b93a5; --accent: #6ea8fe;
+      --critical: #e5484d; --high: #f76b15; --medium: #f5d90a;
+      --low: #46a758; --unknown: #8b93a5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      display: flex; align-items: baseline; gap: 1.5rem;
+      padding: 1rem 2rem; border-bottom: 1px solid var(--border);
+    }
+    header h1 { margin: 0; font-size: 1.2rem; }
+    header h1 a { color: var(--text); text-decoration: none; }
+    header nav a { color: var(--muted); text-decoration: none; margin-right: 1rem; }
+    header nav a:hover { color: var(--accent); }
+    main { max-width: 1100px; margin: 2rem auto; padding: 0 2rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: .55rem .75rem; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; }
+    a { color: var(--accent); }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+    .muted { color: var(--muted); }
+    .badge {
+      display: inline-block; padding: .1rem .55rem; border-radius: 999px;
+      font-size: .75rem; font-weight: 600; color: #0f1115;
+    }
+    .badge.CRITICAL { background: var(--critical); color: #fff; }
+    .badge.HIGH { background: var(--high); }
+    .badge.MEDIUM { background: var(--medium); }
+    .badge.LOW { background: var(--low); }
+    .badge.UNKNOWN { background: var(--unknown); }
+    .badge.ok { background: var(--low); }
+    form.inline { display: inline; }
+    button {
+      background: var(--accent); border: 0; color: #0f1115; font-weight: 600;
+      padding: .35rem .9rem; border-radius: 6px; cursor: pointer;
+    }
+    button.subtle { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    button.subtle:hover { color: var(--critical); border-color: var(--critical); }
+    input[type=text] {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+      padding: .4rem .6rem; border-radius: 6px; min-width: 220px;
+    }
+    .vuln-detail { font-size: .85rem; color: var(--muted); margin: .15rem 0 .4rem; }
+    code { background: var(--bg); padding: .1rem .35rem; border-radius: 4px; font-size: .85em; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><a href="/">🩹 Patch</a></h1>
+    <nav>
+      <a href="/">Repos</a>
+      <a href="/vulnerabilities">All vulnerabilities</a>
+    </nav>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

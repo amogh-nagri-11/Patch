@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Patch — All vulnerabilities{% endblock %}
+{% block content %}
+<h2>All vulnerabilities</h2>
+{% if vulns %}
+<table>
+  <tr><th>Severity</th><th>ID</th><th>Repo</th><th>Package</th><th>Fixed in</th><th>Summary</th></tr>
+  {% for v in vulns %}
+  <tr>
+    <td><span class="badge {{ v.severity }}">{{ v.severity }}</span></td>
+    <td><a href="https://osv.dev/vulnerability/{{ v.osv_id }}" target="_blank" rel="noopener">{{ v.cve_id or v.osv_id }}</a></td>
+    <td><a href="/repos/{{ v.dependency.repo.id }}">{{ v.dependency.repo.name }}</a></td>
+    <td>{{ v.dependency.name }}@{{ v.dependency.version }}</td>
+    <td>{{ v.fixed_version or "—" }}</td>
+    <td class="muted">{{ v.summary or "" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No vulnerabilities found across tracked repos. 🎉</p>
+{% endif %}
+{% endblock %}

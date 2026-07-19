@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Patch — {{ summary.repo.name }}{% endblock %}
+{% block content %}
+<div class="panel">
+  <h2 style="margin-top:0">{{ summary.repo.name }}</h2>
+  <p class="muted">
+    <code>{{ summary.repo.local_path }}</code> ·
+    {{ summary.dependency_count }} dependencies ·
+    {{ summary.vulnerable_count }} vulnerable ·
+    last scanned {{ summary.repo.last_scanned_at.strftime("%Y-%m-%d %H:%M") if summary.repo.last_scanned_at else "never" }}
+  </p>
+  <form class="inline" method="post" action="/repos/{{ summary.repo.id }}/scan">
+    <button type="submit">Scan now</button>
+  </form>
+</div>
+
+{% if deps %}
+<table>
+  <tr><th>Package</th><th>Version</th><th>Ecosystem</th><th>Vulnerabilities</th></tr>
+  {% for d in deps %}
+  <tr>
+    <td>{{ d.name }}</td>
+    <td>{{ d.version or "unpinned" }}</td>
+    <td class="muted">{{ d.ecosystem }}</td>
+    <td>
+      {% if d.vulnerabilities %}
+        {% for v in d.vulnerabilities %}
+          <div>
+            <span class="badge {{ v.severity }}">{{ v.severity }}</span>
+            <strong>{{ v.cve_id or v.osv_id }}</strong>
+            {% if v.fixed_version %}<span class="muted">→ fixed in {{ v.fixed_version }}</span>{% endif %}
+            <div class="vuln-detail">
+              {{ v.summary or "" }}
+              {% if v.affected_range %}<br>Affected: <code>{{ v.affected_range }}</code>{% endif %}
+              · <a href="https://osv.dev/vulnerability/{{ v.osv_id }}" target="_blank" rel="noopener">{{ v.osv_id }}</a>
+            </div>
+          </div>
+        {% endfor %}
+      {% elif d.version %}
+        <span class="muted">none</span>
+      {% else %}
+        <span class="muted">not checked (no exact version)</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No dependencies recorded yet — run a scan.</p>
+{% endif %}
+{% endblock %}

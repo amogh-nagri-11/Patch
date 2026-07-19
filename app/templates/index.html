@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Patch — Repos{% endblock %}
+{% block content %}
+<div class="panel">
+  <form method="post" action="/repos/add">
+    <input type="text" name="name" placeholder="repo name (e.g. my-api)" required>
+    <input type="text" name="local_path" placeholder="local path (e.g. ~/MyProjects/my-api)" required>
+    <button type="submit">Track repo</button>
+  </form>
+</div>
+
+{% if summaries %}
+<table>
+  <tr>
+    <th>Repo</th><th>Dependencies</th><th>Vulnerable</th>
+    <th>Highest severity</th><th>Last scanned</th><th></th>
+  </tr>
+  {% for s in summaries %}
+  <tr>
+    <td><a href="/repos/{{ s.repo.id }}">{{ s.repo.name }}</a></td>
+    <td>{{ s.dependency_count }}</td>
+    <td>{{ s.vulnerable_count }}</td>
+    <td>
+      {% if s.highest_severity %}
+        <span class="badge {{ s.highest_severity }}">{{ s.highest_severity }}</span>
+      {% elif s.repo.last_scanned_at %}
+        <span class="badge ok">CLEAN</span>
+      {% else %}
+        <span class="muted">not scanned</span>
+      {% endif %}
+    </td>
+    <td class="muted">
+      {{ s.repo.last_scanned_at.strftime("%Y-%m-%d %H:%M") if s.repo.last_scanned_at else "never" }}
+    </td>
+    <td>
+      <form class="inline" method="post" action="/repos/{{ s.repo.id }}/scan">
+        <button type="submit">Scan</button>
+      </form>
+      <form class="inline" method="post" action="/repos/{{ s.repo.id }}/delete"
+            onsubmit="return confirm('Stop tracking {{ s.repo.name }}?')">
+        <button type="submit" class="subtle">Remove</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No repos tracked yet. Add one above to get started.</p>
+{% endif %}
+{% endblock %}
