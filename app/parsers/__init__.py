@@ -9,4 +9,10 @@ MANIFEST_PARSERS = {
     "package.json": parse_package_json,
 }
 
-__all__ = ["ParsedDep", "MANIFEST_PARSERS", "parse_requirements", "parse_pyproject", "parse_package_json"]
+# Directories whose manifests belong to other packages, not this repo
+SKIP_DIRS = {
+    ".git", "node_modules", ".venv", "venv", "env",
+    "dist", "build", "__pycache__", ".tox", "site-packages",
+}
+
+__all__ = ["ParsedDep", "MANIFEST_PARSERS", "SKIP_DIRS", "parse_requirements", "parse_pyproject", "parse_package_json"]

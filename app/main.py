@@ -10,9 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, selectinload
 
+from app import config
 from app.db import Base, engine, get_session
+from app.github import GitHubError, parse_github_url
 from app.models import SEVERITY_ORDER, Dependency, Repo, Vulnerability
 from app.osv import OSVClient
+from app.risk import explain_risk
 from app.scanner import scan_repo
 
 logging.basicConfig(level=logging.INFO)
@@ -43,6 +46,7 @@ def severity_rank(sev: str) -> int:
 
 
 templates.env.globals["severity_rank"] = severity_rank
+templates.env.globals["explain_risk"] = explain_risk
 
 
 def repo_summary(repo: Repo) -> dict:
@@ -86,17 +90,31 @@ def index(request: Request, session: Session = Depends(get_session)):
 @app.get("/repos/{repo_id}")
 def repo_detail(repo_id: int, request: Request, session: Session = Depends(get_session)):
     repo = _get_repo(session, repo_id)
-    deps = sorted(
-        repo.dependencies,
+    flagged = sorted(
+        (d for d in repo.dependencies if d.vulnerabilities),
         key=lambda d: (
-            -max((severity_rank(v.severity) for v in d.vulnerabilities), default=-1),
+            -max(severity_rank(v.severity) for v in d.vulnerabilities),
             d.name,
         ),
     )
-    for d in deps:
+    for d in flagged:
         d.vulnerabilities.sort(key=lambda v: -severity_rank(v.severity))
+    clean = sorted(
+        (d for d in repo.dependencies if not d.vulnerabilities and d.version),
+        key=lambda d: d.name,
+    )
+    unchecked = sorted(
+        (d for d in repo.dependencies if not d.version), key=lambda d: d.name
+    )
     return templates.TemplateResponse(
-        request, "repo.html", {"summary": repo_summary(repo), "deps": deps}
+        request,
+        "repo.html",
+        {
+            "summary": repo_summary(repo),
+            "flagged": flagged,
+            "clean": clean,
+            "unchecked": unchecked,
+        },
     )
 
 
@@ -111,16 +129,32 @@ def vulnerabilities_page(request: Request, session: Session = Depends(get_sessio
     return templates.TemplateResponse(request, "vulns.html", {"vulns": vulns})
 
 
+def _create_repo(session: Session, source: str, name: str | None) -> Repo:
+    """Track a repo from either a GitHub URL or a local path."""
+    source = source.strip()
+    if not source:
+        raise HTTPException(422, "source is required")
+    if gh := parse_github_url(source):
+        owner, repo_name = gh
+        repo = Repo(
+            name=name or f"{owner}/{repo_name}", owner=owner, github_url=source
+        )
+    else:
+        repo = Repo(name=name or Path(source).expanduser().name, local_path=source)
+    if session.scalar(select(Repo).where(Repo.name == repo.name)):
+        raise HTTPException(409, f"Repo '{repo.name}' is already tracked")
+    session.add(repo)
+    session.commit()
+    return repo
+
+
 @app.post("/repos/add")
 def add_repo(
-    name: str = Form(...),
-    local_path: str = Form(...),
+    source: str = Form(...),
+    name: str = Form(""),
     session: Session = Depends(get_session),
 ):
-    if session.scalar(select(Repo).where(Repo.name == name)):
-        raise HTTPException(409, f"Repo '{name}' is already tracked")
-    session.add(Repo(name=name, local_path=local_path))
-    session.commit()
+    _create_repo(session, source, name.strip() or None)
     return RedirectResponse("/", status_code=303)
 
 
@@ -131,7 +165,7 @@ def trigger_scan(
     repo = _get_repo(session, repo_id)
     try:
         result = scan_repo(session, repo, request.app.state.osv)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, GitHubError) as exc:
         raise HTTPException(400, str(exc))
     if request.headers.get("accept", "").startswith("application/json"):
         return result
@@ -154,6 +188,7 @@ def api_repos(session: Session = Depends(get_session)):
             "id": s["repo"].id,
             "name": s["repo"].name,
             "local_path": s["repo"].local_path,
+            "github_url": s["repo"].github_url,
             "last_scanned_at": s["repo"].last_scanned_at,
             "dependency_count": s["dependency_count"],
             "vulnerable_count": s["vulnerable_count"],
@@ -165,15 +200,40 @@ def api_repos(session: Session = Depends(get_session)):
 
 @app.post("/api/repos", status_code=201)
 def api_add_repo(body: dict, session: Session = Depends(get_session)):
-    name, local_path = body.get("name"), body.get("local_path")
-    if not name or not local_path:
-        raise HTTPException(422, "name and local_path are required")
-    if session.scalar(select(Repo).where(Repo.name == name)):
-        raise HTTPException(409, f"Repo '{name}' is already tracked")
-    repo = Repo(name=name, local_path=local_path)
-    session.add(repo)
-    session.commit()
-    return {"id": repo.id, "name": repo.name, "local_path": repo.local_path}
+    source = body.get("source") or body.get("github_url") or body.get("local_path")
+    if not source:
+        raise HTTPException(422, "source (GitHub URL or local path) is required")
+    repo = _create_repo(session, source, body.get("name"))
+    return {
+        "id": repo.id,
+        "name": repo.name,
+        "local_path": repo.local_path,
+        "github_url": repo.github_url,
+    }
+
+
+@app.get("/api/browse")
+def api_browse(path: str | None = None):
+    """List subdirectories for the dashboard's folder picker."""
+    target = Path(path).expanduser() if path else Path(config.BROWSE_ROOT)
+    try:
+        target = target.resolve(strict=True)
+    except OSError:
+        raise HTTPException(400, f"Not a readable directory: {target}")
+    if not target.is_dir():
+        raise HTTPException(400, f"Not a directory: {target}")
+    try:
+        dirs = sorted(
+            c.name for c in target.iterdir()
+            if c.is_dir() and not c.name.startswith(".")
+        )
+    except PermissionError:
+        raise HTTPException(400, f"Permission denied: {target}")
+    return {
+        "path": str(target),
+        "parent": str(target.parent) if target.parent != target else None,
+        "dirs": dirs,
+    }
 
 
 @app.get("/api/repos/{repo_id}/dependencies")
@@ -190,6 +250,7 @@ def api_dependencies(repo_id: int, session: Session = Depends(get_session)):
                     "cve_id": v.cve_id,
                     "severity": v.severity,
                     "summary": v.summary,
+                    "risk": explain_risk(v.summary, v.severity),
                     "fixed_version": v.fixed_version,
                 }
                 for v in d.vulnerabilities
@@ -217,6 +278,7 @@ def api_vulnerabilities(session: Session = Depends(get_session)):
                 "cve_id": v.cve_id,
                 "severity": v.severity,
                 "summary": v.summary,
+                "risk": explain_risk(v.summary, v.severity),
                 "affected_range": v.affected_range,
                 "fixed_version": v.fixed_version,
             }

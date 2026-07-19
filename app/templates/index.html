@@ -3,11 +3,64 @@
 {% block content %}
 <div class="panel">
   <form method="post" action="/repos/add">
-    <input type="text" name="name" placeholder="repo name (e.g. my-api)" required>
-    <input type="text" name="local_path" placeholder="local path (e.g. ~/MyProjects/my-api)" required>
+    <input type="text" name="source" id="source" style="min-width:340px"
+           placeholder="GitHub URL or local path" required>
+    <button type="button" class="subtle" onclick="openBrowser()">Browse…</button>
+    <input type="text" name="name" placeholder="name (optional)">
     <button type="submit">Track repo</button>
   </form>
+  <p class="muted" style="margin:.6rem 0 0;font-size:.82rem">
+    Paste a GitHub link (e.g. <code>https://github.com/pallets/flask</code>) to scan via the
+    GitHub API, or pick a local folder.
+  </p>
 </div>
+
+<div id="browser" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10"
+     onclick="if(event.target===this)closeBrowser()">
+  <div class="panel" style="max-width:520px;margin:10vh auto;max-height:70vh;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem">
+      <code id="browser-path" style="overflow-wrap:anywhere"></code>
+      <button type="button" class="subtle" onclick="closeBrowser()">✕</button>
+    </div>
+    <div id="browser-list" style="overflow-y:auto;margin:1rem 0;flex:1"></div>
+    <button type="button" onclick="pickFolder()">Use this folder</button>
+  </div>
+</div>
+
+<script>
+  const browser = document.getElementById("browser");
+  let currentPath = null;
+
+  async function loadDir(path) {
+    const url = "/api/browse" + (path ? "?path=" + encodeURIComponent(path) : "");
+    const resp = await fetch(url);
+    if (!resp.ok) { alert((await resp.json()).detail); return; }
+    const data = await resp.json();
+    currentPath = data.path;
+    document.getElementById("browser-path").textContent = data.path;
+    const list = document.getElementById("browser-list");
+    list.innerHTML = "";
+    const entry = (label, target) => {
+      const div = document.createElement("div");
+      div.textContent = label;
+      div.style.cssText = "padding:.3rem .5rem;cursor:pointer;border-radius:6px";
+      div.onmouseenter = () => div.style.background = "var(--bg)";
+      div.onmouseleave = () => div.style.background = "";
+      div.onclick = () => loadDir(target);
+      list.appendChild(div);
+    };
+    if (data.parent) entry("↰ ..", data.parent);
+    data.dirs.forEach(d => entry("📁 " + d, data.path.replace(/\/$/, "") + "/" + d));
+    if (!data.dirs.length) list.insertAdjacentHTML("beforeend", '<p class="muted">no subfolders</p>');
+  }
+
+  function openBrowser() { browser.hidden = false; loadDir(null); }
+  function closeBrowser() { browser.hidden = true; }
+  function pickFolder() {
+    document.getElementById("source").value = currentPath;
+    closeBrowser();
+  }
+</script>
 
 {% if summaries %}
 <table>

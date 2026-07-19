@@ -6,22 +6,18 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.github import collect_deps_github
 from app.models import Dependency, Repo, ScanHistory, Vulnerability, utcnow
 from app.osv import OSVClient
-from app.parsers import MANIFEST_PARSERS, ParsedDep
+from app.parsers import MANIFEST_PARSERS, SKIP_DIRS, ParsedDep
 
 logger = logging.getLogger(__name__)
-
-_SKIP_DIRS = {
-    ".git", "node_modules", ".venv", "venv", "env",
-    "dist", "build", "__pycache__", ".tox", "site-packages",
-}
 
 
 def find_manifests(root: Path) -> list[Path]:
     manifests = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         manifests.extend(
             Path(dirpath) / f for f in filenames if f in MANIFEST_PARSERS
         )
@@ -40,11 +36,13 @@ def collect_deps(root: Path) -> set[ParsedDep]:
 
 
 def scan_repo(session: Session, repo: Repo, osv: OSVClient) -> dict:
-    root = Path(repo.local_path).expanduser()
-    if not root.is_dir():
-        raise FileNotFoundError(f"Repo path does not exist: {root}")
-
-    deps = collect_deps(root)
+    if repo.github_url:
+        deps = collect_deps_github(repo.github_url)
+    else:
+        root = Path(repo.local_path).expanduser()
+        if not root.is_dir():
+            raise FileNotFoundError(f"Repo path does not exist: {root}")
+        deps = collect_deps(root)
     vuln_map = osv.query(list(deps))
     now = utcnow()
 
@@ -67,23 +65,37 @@ def scan_repo(session: Session, repo: Repo, osv: OSVClient) -> dict:
             session.add(row)
         row.last_seen_at = now
 
-        # Replace this dependency's vulns with the latest OSV answer
-        row.vulnerabilities = [
-            Vulnerability(
-                osv_id=v.osv_id,
-                cve_id=v.cve_id,
-                severity=v.severity,
-                summary=v.summary,
-                affected_range=v.affected_range,
-                fixed_version=v.fixed_version,
-            )
-            for v in vuln_map.get(parsed, [])
-        ]
+        # Diff this dependency's vulns against the latest OSV answer: keep
+        # unchanged rows (preserves discovered_at), add new, drop withdrawn.
+        current = {v.osv_id: v for v in row.vulnerabilities}
+        latest = {v.osv_id: v for v in vuln_map.get(parsed, [])}
+        for osv_id in current.keys() - latest.keys():
+            row.vulnerabilities.remove(current[osv_id])
+        for osv_id, rec in latest.items():
+            if osv_id in current:
+                vuln = current[osv_id]  # advisory may have been updated
+                vuln.cve_id = rec.cve_id
+                vuln.severity = rec.severity
+                vuln.summary = rec.summary
+                vuln.affected_range = rec.affected_range
+                vuln.fixed_version = rec.fixed_version
+            else:
+                row.vulnerabilities.append(
+                    Vulnerability(
+                        osv_id=rec.osv_id,
+                        cve_id=rec.cve_id,
+                        severity=rec.severity,
+                        summary=rec.summary,
+                        affected_range=rec.affected_range,
+                        fixed_version=rec.fixed_version,
+                    )
+                )
 
-    # Dependencies no longer in any manifest (removed or version-bumped)
+    # Dependencies no longer in any manifest (removed or version-bumped);
+    # removing from the collection triggers the delete-orphan cascade
     for key, row in existing.items():
         if key not in seen_keys:
-            session.delete(row)
+            repo.dependencies.remove(row)
 
     vulnerable_count = sum(1 for d in deps if vuln_map.get(d))
     session.add(

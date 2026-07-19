@@ -4,7 +4,7 @@
 <h2>All vulnerabilities</h2>
 {% if vulns %}
 <table>
-  <tr><th>Severity</th><th>ID</th><th>Repo</th><th>Package</th><th>Fixed in</th><th>Summary</th></tr>
+  <tr><th>Severity</th><th>ID</th><th>Repo</th><th>Package</th><th>Fixed in</th><th>Risk</th></tr>
   {% for v in vulns %}
   <tr>
     <td><span class="badge {{ v.severity }}">{{ v.severity }}</span></td>
@@ -12,7 +12,10 @@
     <td><a href="/repos/{{ v.dependency.repo.id }}">{{ v.dependency.repo.name }}</a></td>
     <td>{{ v.dependency.name }}@{{ v.dependency.version }}</td>
     <td>{{ v.fixed_version or "—" }}</td>
-    <td class="muted">{{ v.summary or "" }}</td>
+    <td>
+      {{ explain_risk(v.summary, v.severity) }}
+      <div class="vuln-detail">{{ v.summary or "" }}</div>
+    </td>
   </tr>
   {% endfor %}
 </table>

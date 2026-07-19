@@ -19,7 +19,9 @@ class Repo(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True)
     owner: Mapped[str | None] = mapped_column(String(255))
-    local_path: Mapped[str] = mapped_column(Text)
+    # Exactly one of these is set: scan a local checkout, or fetch via GitHub API
+    local_path: Mapped[str | None] = mapped_column(Text)
+    github_url: Mapped[str | None] = mapped_column(Text)
     last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow
