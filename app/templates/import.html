@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Patch — Import from GitHub{% endblock %}
+{% block content %}
+<h2>Import repos from GitHub</h2>
+
+{% if connect_needed %}
+<div class="panel">
+  {% if github_enabled %}
+  <p>To list your GitHub repositories, Patch needs repository access
+     (the <code>repo</code> scope — this also enables scanning your private repos).</p>
+  <a href="/auth/github/login?connect=1"><button>Connect GitHub with repo access</button></a>
+  <p class="muted" style="font-size:.85rem;margin-bottom:0">
+    Prefer not to grant this? You can always track public repos by pasting
+    their links on the <a href="/">dashboard</a>.
+  </p>
+  {% else %}
+  <p class="muted">GitHub OAuth isn't configured on this instance — track repos
+     by pasting links on the <a href="/">dashboard</a> instead.</p>
+  {% endif %}
+</div>
+{% else %}
+<form method="post" action="/import">
+  <div class="panel">
+    {% for r in gh_repos %}
+    <label style="display:block;padding:.3rem 0;cursor:pointer">
+      <input type="checkbox" name="repos" value="{{ r.full_name }}"
+             {% if r.tracked %}checked disabled{% endif %}>
+      {{ r.full_name }}
+      {% if r.private %}<span class="badge UNKNOWN">private</span>{% endif %}
+      {% if r.tracked %}<span class="muted" style="font-size:.85rem">already tracked</span>{% endif %}
+    </label>
+    {% else %}
+    <p class="muted">No repositories found on your GitHub account.</p>
+    {% endfor %}
+  </div>
+  {% if gh_repos %}<button type="submit">Track selected repos</button>{% endif %}
+</form>
+{% endif %}
+{% endblock %}

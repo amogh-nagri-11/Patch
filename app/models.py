@@ -13,11 +13,42 @@ def utcnow() -> datetime:
 SEVERITY_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "UNKNOWN": 0}
 
 
-class Repo(Base):
-    __tablename__ = "repos"
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("provider", "provider_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True)
+    provider: Mapped[str] = mapped_column(String(20))  # github | google | local
+    provider_id: Mapped[str] = mapped_column(String(100))
+    username: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255))
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+    # GitHub access token (present after GitHub login or "connect GitHub")
+    github_token: Mapped[str | None] = mapped_column(Text)
+    github_token_scopes: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+    repos: Mapped[list["Repo"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+    @property
+    def can_list_github_repos(self) -> bool:
+        scopes = (self.github_token_scopes or "").split(",")
+        return bool(self.github_token) and "repo" in [s.strip() for s in scopes]
+
+
+class Repo(Base):
+    __tablename__ = "repos"
+    __table_args__ = (UniqueConstraint("user_id", "name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
     owner: Mapped[str | None] = mapped_column(String(255))
     # Exactly one of these is set: scan a local checkout, or fetch via GitHub API
     local_path: Mapped[str | None] = mapped_column(Text)
@@ -27,6 +58,7 @@ class Repo(Base):
         DateTime(timezone=True), default=utcnow
     )
 
+    user: Mapped[User] = relationship(back_populates="repos")
     dependencies: Mapped[list["Dependency"]] = relationship(
         back_populates="repo", cascade="all, delete-orphan"
     )

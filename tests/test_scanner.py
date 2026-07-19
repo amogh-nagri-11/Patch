@@ -2,7 +2,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.models import Repo, ScanHistory, Vulnerability
+from app.models import Repo, ScanHistory, User, Vulnerability
 from app.osv import VulnRecord
 from app.scanner import scan_repo
 
@@ -36,7 +36,8 @@ def make_session():
 def test_rescan_with_existing_vulns_does_not_crash(tmp_path):
     (tmp_path / "requirements.txt").write_text("flask==2.0.0\nhttpx==0.27.0\n")
     session = make_session()
-    repo = Repo(name="t", local_path=str(tmp_path))
+    user = User(provider="local", provider_id="local", username="t")
+    repo = Repo(user=user, name="t", local_path=str(tmp_path))
     session.add(repo)
     session.commit()
 
@@ -57,7 +58,8 @@ def test_scan_reflects_dependency_fix(tmp_path):
     manifest = tmp_path / "requirements.txt"
     manifest.write_text("flask==2.0.0\n")
     session = make_session()
-    repo = Repo(name="t", local_path=str(tmp_path))
+    user = User(provider="local", provider_id="local", username="t")
+    repo = Repo(user=user, name="t", local_path=str(tmp_path))
     session.add(repo)
     session.commit()
 

@@ -29,6 +29,23 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 When running outside Docker, use real host paths (e.g. `~/MyProjects/my-api`) when tracking repos.
 
+## Auth
+
+Patch is multi-user: each user signs in and sees only their own repos and scan results.
+
+- **Sign in with GitHub** — asks only for your public profile (`read:user`). Choosing
+  **Import from GitHub** later requests the `repo` scope separately, which unlocks
+  a checkbox picker of all your repositories (including private ones) and lets the
+  scanner read private repos.
+- **Sign in with Google** — identity only; track any public repo by pasting its
+  GitHub link (you can also connect GitHub afterwards from the Import page).
+- **No providers configured?** Patch runs in single-user dev mode: no login screen,
+  everything belongs to an implicit local user. This keeps local development friction-free.
+
+Setup: register the OAuth apps as described in `.env.example`, and set `SECRET_KEY`
+and `BASE_URL`. Note that users' GitHub tokens are stored in Postgres unencrypted in
+this version — treat database access as sensitive.
+
 ## How it works
 
 1. **Ingestion** — you register a repo by GitHub URL or local path. For local repos the scanner walks the tree (skipping `node_modules`, virtualenvs, etc.); for GitHub repos it lists the default branch's tree via the API and fetches just the manifest files. Either way manifests are parsed into normalized `{name, version, ecosystem}` deps. Only exactly-pinned versions are vulnerability-checked; npm `^`/`~` specs are approximated by their base version.

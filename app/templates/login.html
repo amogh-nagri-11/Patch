@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Patch — Sign in{% endblock %}
+{% block content %}
+<div class="panel" style="max-width:400px;margin:10vh auto;text-align:center">
+  <h2 style="margin-top:0">Sign in to Patch</h2>
+  <p class="muted">Track your repos' dependencies and get flagged when one of them
+     is carrying a known vulnerability.</p>
+  {% if github_enabled %}
+  <p><a href="/auth/github/login"><button style="min-width:230px">Continue with GitHub</button></a></p>
+  {% endif %}
+  {% if google_enabled %}
+  <p><a href="/auth/google/login"><button class="subtle" style="min-width:230px">Continue with Google</button></a></p>
+  {% endif %}
+  <p class="muted" style="font-size:.8rem;margin-bottom:0">
+    GitHub sign-in only reads your public profile. Repository access is
+    requested separately — and only if you choose to import repos.
+  </p>
+</div>
+{% endblock %}

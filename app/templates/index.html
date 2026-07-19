@@ -3,9 +3,14 @@
 {% block content %}
 <div class="panel">
   <form method="post" action="/repos/add">
-    <input type="text" name="source" id="source" style="min-width:340px"
-           placeholder="GitHub URL or local path" required>
-    <button type="button" class="subtle" onclick="openBrowser()">Browse…</button>
+    <span style="position:relative;display:inline-block">
+      <input type="text" name="source" id="source"
+             style="min-width:340px;padding-right:2.1rem"
+             placeholder="GitHub URL or local path" required>
+      <button type="button" onclick="openBrowser()" title="Browse local folders"
+              style="position:absolute;right:.15rem;top:50%;transform:translateY(-50%);
+                     background:none;border:0;padding:.15rem .3rem;font-size:1rem;cursor:pointer">📁</button>
+    </span>
     <input type="text" name="name" placeholder="name (optional)">
     <button type="submit">Track repo</button>
   </form>

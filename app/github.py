@@ -30,10 +30,11 @@ def is_manifest_path(path: str) -> bool:
     return parts[-1] in MANIFEST_PARSERS and not any(p in SKIP_DIRS for p in parts)
 
 
-def _client() -> httpx.Client:
+def _client(token: str | None = None) -> httpx.Client:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "patch-scanner"}
-    if config.GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {config.GITHUB_TOKEN}"
+    token = token or config.GITHUB_TOKEN
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     return httpx.Client(
         base_url="https://api.github.com", headers=headers, timeout=30
     )
@@ -51,13 +52,13 @@ def _check(resp: httpx.Response, context: str) -> httpx.Response:
     return resp
 
 
-def collect_deps_github(url: str) -> set[ParsedDep]:
+def collect_deps_github(url: str, token: str | None = None) -> set[ParsedDep]:
     parsed = parse_github_url(url)
     if parsed is None:
         raise GitHubError(f"Not a GitHub repo URL: {url}")
     owner, name = parsed
 
-    with _client() as client:
+    with _client(token) as client:
         repo_info = _check(
             client.get(f"/repos/{owner}/{name}"), f"{owner}/{name}"
         ).json()

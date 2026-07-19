@@ -4,19 +4,21 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, selectinload
+from starlette.middleware.sessions import SessionMiddleware
 
 from app import config
+from app.auth import AuthRequired, current_user, router as auth_router
 from app.db import Base, engine, get_session
 from app.github import GitHubError, parse_github_url
-from app.models import SEVERITY_ORDER, Dependency, Repo, Vulnerability
+from app.models import Dependency, Repo, User, Vulnerability
 from app.osv import OSVClient
 from app.risk import explain_risk
 from app.scanner import scan_repo
+from app.templating import severity_rank, templates
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,15 +40,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Patch", lifespan=lifespan)
-templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+app.add_middleware(
+    SessionMiddleware, secret_key=config.SECRET_KEY, same_site="lax"
+)
+app.include_router(auth_router)
 
 
-def severity_rank(sev: str) -> int:
-    return SEVERITY_ORDER.get(sev, 0)
-
-
-templates.env.globals["severity_rank"] = severity_rank
-templates.env.globals["explain_risk"] = explain_risk
+@app.exception_handler(AuthRequired)
+async def auth_required_handler(request: Request, _exc: AuthRequired):
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
 
 
 def repo_summary(repo: Repo) -> dict:
@@ -60,36 +64,60 @@ def repo_summary(repo: Repo) -> dict:
     }
 
 
-def _load_repos(session: Session) -> list[Repo]:
+def _load_repos(session: Session, user: User) -> list[Repo]:
     return list(
         session.scalars(
             select(Repo)
+            .where(Repo.user_id == user.id)
             .options(selectinload(Repo.dependencies).selectinload(Dependency.vulnerabilities))
             .order_by(Repo.name)
         )
     )
 
 
-def _get_repo(session: Session, repo_id: int) -> Repo:
+def _get_repo(session: Session, user: User, repo_id: int) -> Repo:
     repo = session.get(Repo, repo_id)
-    if repo is None:
+    if repo is None or repo.user_id != user.id:
         raise HTTPException(404, "Repo not found")
     return repo
+
+
+def _user_vulns(session: Session, user: User) -> list[Vulnerability]:
+    return list(
+        session.scalars(
+            select(Vulnerability)
+            .join(Vulnerability.dependency)
+            .join(Dependency.repo)
+            .where(Repo.user_id == user.id)
+            .options(
+                selectinload(Vulnerability.dependency).selectinload(Dependency.repo)
+            )
+        )
+    )
 
 
 # ---------- Dashboard pages ----------
 
 @app.get("/")
-def index(request: Request, session: Session = Depends(get_session)):
-    summaries = [repo_summary(r) for r in _load_repos(session)]
+def index(
+    request: Request,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    summaries = [repo_summary(r) for r in _load_repos(session, user)]
     return templates.TemplateResponse(
-        request, "index.html", {"summaries": summaries}
+        request, "index.html", {"user": user, "summaries": summaries}
     )
 
 
 @app.get("/repos/{repo_id}")
-def repo_detail(repo_id: int, request: Request, session: Session = Depends(get_session)):
-    repo = _get_repo(session, repo_id)
+def repo_detail(
+    repo_id: int,
+    request: Request,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    repo = _get_repo(session, user, repo_id)
     flagged = sorted(
         (d for d in repo.dependencies if d.vulnerabilities),
         key=lambda d: (
@@ -110,6 +138,7 @@ def repo_detail(repo_id: int, request: Request, session: Session = Depends(get_s
         request,
         "repo.html",
         {
+            "user": user,
             "summary": repo_summary(repo),
             "flagged": flagged,
             "clean": clean,
@@ -119,17 +148,22 @@ def repo_detail(repo_id: int, request: Request, session: Session = Depends(get_s
 
 
 @app.get("/vulnerabilities")
-def vulnerabilities_page(request: Request, session: Session = Depends(get_session)):
-    vulns = session.scalars(
-        select(Vulnerability).options(
-            selectinload(Vulnerability.dependency).selectinload(Dependency.repo)
-        )
-    ).all()
-    vulns = sorted(vulns, key=lambda v: -severity_rank(v.severity))
-    return templates.TemplateResponse(request, "vulns.html", {"vulns": vulns})
+def vulnerabilities_page(
+    request: Request,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    vulns = sorted(
+        _user_vulns(session, user), key=lambda v: -severity_rank(v.severity)
+    )
+    return templates.TemplateResponse(
+        request, "vulns.html", {"user": user, "vulns": vulns}
+    )
 
 
-def _create_repo(session: Session, source: str, name: str | None) -> Repo:
+def _create_repo(
+    session: Session, user: User, source: str, name: str | None
+) -> Repo:
     """Track a repo from either a GitHub URL or a local path."""
     source = source.strip()
     if not source:
@@ -137,11 +171,18 @@ def _create_repo(session: Session, source: str, name: str | None) -> Repo:
     if gh := parse_github_url(source):
         owner, repo_name = gh
         repo = Repo(
-            name=name or f"{owner}/{repo_name}", owner=owner, github_url=source
+            user=user,
+            name=name or f"{owner}/{repo_name}",
+            owner=owner,
+            github_url=source,
         )
     else:
-        repo = Repo(name=name or Path(source).expanduser().name, local_path=source)
-    if session.scalar(select(Repo).where(Repo.name == repo.name)):
+        repo = Repo(
+            user=user, name=name or Path(source).expanduser().name, local_path=source
+        )
+    if session.scalar(
+        select(Repo).where(Repo.user_id == user.id, Repo.name == repo.name)
+    ):
         raise HTTPException(409, f"Repo '{repo.name}' is already tracked")
     session.add(repo)
     session.commit()
@@ -152,17 +193,21 @@ def _create_repo(session: Session, source: str, name: str | None) -> Repo:
 def add_repo(
     source: str = Form(...),
     name: str = Form(""),
+    user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    _create_repo(session, source, name.strip() or None)
+    _create_repo(session, user, source, name.strip() or None)
     return RedirectResponse("/", status_code=303)
 
 
 @app.post("/repos/{repo_id}/scan")
 def trigger_scan(
-    repo_id: int, request: Request, session: Session = Depends(get_session)
+    repo_id: int,
+    request: Request,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
 ):
-    repo = _get_repo(session, repo_id)
+    repo = _get_repo(session, user, repo_id)
     try:
         result = scan_repo(session, repo, request.app.state.osv)
     except (FileNotFoundError, GitHubError) as exc:
@@ -173,8 +218,12 @@ def trigger_scan(
 
 
 @app.post("/repos/{repo_id}/delete")
-def delete_repo(repo_id: int, session: Session = Depends(get_session)):
-    session.delete(_get_repo(session, repo_id))
+def delete_repo(
+    repo_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    session.delete(_get_repo(session, user, repo_id))
     session.commit()
     return RedirectResponse("/", status_code=303)
 
@@ -182,7 +231,9 @@ def delete_repo(repo_id: int, session: Session = Depends(get_session)):
 # ---------- JSON API ----------
 
 @app.get("/api/repos")
-def api_repos(session: Session = Depends(get_session)):
+def api_repos(
+    user: User = Depends(current_user), session: Session = Depends(get_session)
+):
     return [
         {
             "id": s["repo"].id,
@@ -194,16 +245,20 @@ def api_repos(session: Session = Depends(get_session)):
             "vulnerable_count": s["vulnerable_count"],
             "highest_severity": s["highest_severity"],
         }
-        for s in map(repo_summary, _load_repos(session))
+        for s in map(repo_summary, _load_repos(session, user))
     ]
 
 
 @app.post("/api/repos", status_code=201)
-def api_add_repo(body: dict, session: Session = Depends(get_session)):
+def api_add_repo(
+    body: dict,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
     source = body.get("source") or body.get("github_url") or body.get("local_path")
     if not source:
         raise HTTPException(422, "source (GitHub URL or local path) is required")
-    repo = _create_repo(session, source, body.get("name"))
+    repo = _create_repo(session, user, source, body.get("name"))
     return {
         "id": repo.id,
         "name": repo.name,
@@ -213,7 +268,7 @@ def api_add_repo(body: dict, session: Session = Depends(get_session)):
 
 
 @app.get("/api/browse")
-def api_browse(path: str | None = None):
+def api_browse(path: str | None = None, _user: User = Depends(current_user)):
     """List subdirectories for the dashboard's folder picker."""
     target = Path(path).expanduser() if path else Path(config.BROWSE_ROOT)
     try:
@@ -237,8 +292,12 @@ def api_browse(path: str | None = None):
 
 
 @app.get("/api/repos/{repo_id}/dependencies")
-def api_dependencies(repo_id: int, session: Session = Depends(get_session)):
-    repo = _get_repo(session, repo_id)
+def api_dependencies(
+    repo_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    repo = _get_repo(session, user, repo_id)
     return [
         {
             "name": d.name,
@@ -261,12 +320,9 @@ def api_dependencies(repo_id: int, session: Session = Depends(get_session)):
 
 
 @app.get("/api/vulnerabilities")
-def api_vulnerabilities(session: Session = Depends(get_session)):
-    vulns = session.scalars(
-        select(Vulnerability).options(
-            selectinload(Vulnerability.dependency).selectinload(Dependency.repo)
-        )
-    ).all()
+def api_vulnerabilities(
+    user: User = Depends(current_user), session: Session = Depends(get_session)
+):
     return sorted(
         (
             {
@@ -282,7 +338,7 @@ def api_vulnerabilities(session: Session = Depends(get_session)):
                 "affected_range": v.affected_range,
                 "fixed_version": v.fixed_version,
             }
-            for v in vulns
+            for v in _user_vulns(session, user)
         ),
         key=lambda v: -severity_rank(v["severity"]),
     )

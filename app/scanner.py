@@ -37,7 +37,8 @@ def collect_deps(root: Path) -> set[ParsedDep]:
 
 def scan_repo(session: Session, repo: Repo, osv: OSVClient) -> dict:
     if repo.github_url:
-        deps = collect_deps_github(repo.github_url)
+        # The owner's OAuth token lets us reach their private repos
+        deps = collect_deps_github(repo.github_url, token=repo.user.github_token)
     else:
         root = Path(repo.local_path).expanduser()
         if not root.is_dir():
